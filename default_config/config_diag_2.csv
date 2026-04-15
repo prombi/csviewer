@@ -1,0 +1,5 @@
+﻿Sichtbar;Column;Bezeichnung;Einheit;Skala min;Skala max;Farbe
+true;Zeitpunkt;Zeit;hh:mm:ss;;;
+true;Außentemp.;Außentemperatur;°C;-20;50;#1f77b4
+true;HK 2 TVL Soll;HK2 Vorlauftemperatur Soll;°C;0;50;#ff7f0e
+true;HK 2 TVL Ist;HK2 Vorlauftemperatur Ist (T16);°C;0;50;#d62728

@@ -1,0 +1,9 @@
+﻿Sichtbar;Column;Bezeichnung;Einheit;Skala min;Skala max;Farbe
+true;Zeitpunkt;Zeit;hh:mm:ss;;;
+true;WÜST 1 TRL Sek Ist;HK0 Rücklauftemperatur Sek. Ist (T15);°C;0;100;#76b7ff
+true;WÜST 1 TVL Sek Soll;HK0 Vorlauftemperatur Sek. Soll;°C;0;100;#ff7f0e
+true;WÜST 1 TVL Sek Ist;HK0 Vorlauftemperatur Sek. Ist (T12);°C;0;100;#d62728
+true;WÜST 1 Pwrvl Ist;Wärmeleistung;kW;0;100;#9467bd
+true;SP 1 TBO Ist;Pufferfühler Oben (T13);°C;0;100;#8b0000
+true;SP 2 TBO Ist;Pufferfühler Mitte (T23);°C;0;100;#e377c2
+true;SP 2 TBU Ist;Pufferfühler Unten (T24);°C;0;100;#ffd400
