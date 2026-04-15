@@ -328,8 +328,8 @@ def build_figure(
 # ---------------------------------------------------------------------------
 # Streamlit UI
 # ---------------------------------------------------------------------------
-st.set_page_config(page_title="Visualisierung Übergabestation", layout="wide")
-st.title("Visualisierung Übergabestation")
+st.set_page_config(page_title="CSV Viewer", layout="wide")
+st.title("CSV Viewer")
 
 with st.sidebar:
     st.header("1) Daten")
