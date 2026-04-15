@@ -320,19 +320,24 @@ def _build_raw(fig: go.Figure, series: list[dict], x_data) -> None:
 
 
 def _build_multi_axis(fig: go.Figure, series: list[dict], x_data) -> None:
-    """Je Serie eine eigene Y-Achse, links gestapelt in Seriefarbe."""
+    """Je Serie eine eigene Y-Achse, links gestapelt in Seriefarbe.
+
+    Die Einheit wird als zentrierte Annotation unterhalb der jeweiligen
+    Achse gesetzt (statt als gedrehter axis title, der bei engem
+    Stapeln überlappt).
+    """
     n = len(series)
     if n == 0:
         return
-    # Plotfläche um Platz für die gestapelten Achsen links einrücken.
-    axis_step = 0.04  # Bruchteil der Plotbreite pro Achse
-    left_reserved = min(0.35, axis_step * n)
+    axis_step = 0.05
+    left_reserved = min(0.4, axis_step * n)
     x_domain = [left_reserved, 1.0]
+
+    annotations = []
 
     for i, s in enumerate(series):
         vmin, vmax = s["vmin"], s["vmax"]
         hu = f" {s['einheit']}" if s["einheit"] else ""
-        # Achsen-ID: erste Serie -> "y", weitere -> "y2", "y3", ...
         axis_id = "y" if i == 0 else f"y{i + 1}"
         fig.add_trace(go.Scatter(
             x=x_data, y=s["y_raw"], mode="lines",
@@ -345,8 +350,8 @@ def _build_multi_axis(fig: go.Figure, series: list[dict], x_data) -> None:
         # Position der Achse: links, gestapelt von innen nach außen.
         position = max(0.0, left_reserved - (i + 1) * axis_step)
         axis_cfg = dict(
-            title=dict(text=s["einheit"], font=dict(color=s["color"])),
-            tickfont=dict(color=s["color"]),
+            title=None,  # Titel weglassen; stattdessen Annotation unten
+            tickfont=dict(color=s["color"], size=10),
             linecolor=s["color"],
             showgrid=(i == 0),  # nur erste Achse zeigt Gitter
             zeroline=False,
@@ -363,8 +368,23 @@ def _build_multi_axis(fig: go.Figure, series: list[dict], x_data) -> None:
             )
             fig.update_layout(**{f"yaxis{i + 1}": axis_cfg})
 
-    # xaxis-domain einschränken, damit die Achsen links Platz haben.
-    fig.update_layout(xaxis=dict(domain=x_domain))
+        if s["einheit"]:
+            annotations.append(dict(
+                x=position if i > 0 else left_reserved,
+                y=-0.02,
+                xref="paper", yref="paper",
+                xanchor="center", yanchor="top",
+                text=s["einheit"],
+                showarrow=False,
+                font=dict(color=s["color"], size=11),
+            ))
+
+    # xaxis-domain einschränken, Rangeslider deaktivieren (kollidiert sonst
+    # mit den Einheits-Annotationen unter den Y-Achsen).
+    fig.update_layout(
+        xaxis=dict(domain=x_domain, rangeslider=dict(visible=False)),
+        annotations=annotations,
+    )
 
 
 # ---------------------------------------------------------------------------
