@@ -212,10 +212,13 @@ def empty_config(columns: list[str]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Plot-Erzeugung
 # ---------------------------------------------------------------------------
+DISPLAY_MODES = ("Separate Y-Achsen je Serie", "Normiert (0…1)", "Gemeinsame Y-Achse")
+
+
 def build_figure(
     df: pd.DataFrame,
     cfg: pd.DataFrame,
-    normalize: bool,
+    mode: str,
     x_range=None,
 ) -> go.Figure:
     """Erzeugt das Diagramm. cfg.iloc[0] = x-Achse, cfg.iloc[1:] = y-Serien."""
@@ -233,16 +236,12 @@ def build_figure(
     x_title = f"{x_label} [{x_einheit}]" if x_einheit else x_label
 
     y_cfg = cfg.iloc[1:].reset_index(drop=True)
-    # Unsichtbare Serien aus dem Plot ausblenden (Zeilen-Index für stabile
-    # Farben aus der Palette bleibt erhalten).
     if "Sichtbar" in y_cfg.columns:
         y_cfg = y_cfg[y_cfg["Sichtbar"].map(_parse_bool)].reset_index(drop=True)
 
-    fig = go.Figure()
-
-    # Farbpalette auffüllen
+    # Pro y-Serie effektive Werte bestimmen (inkl. Fallback auf Daten-Min/Max).
+    series = []
     palette = DEFAULT_PALETTE
-
     for i, row in y_cfg.iterrows():
         col = row["Column"]
         if col not in df.columns:
@@ -250,64 +249,35 @@ def build_figure(
         label = (row["Bezeichnung"] or col).strip() or col
         einheit = (row["Einheit"] or "").strip()
         color = (row.get("Farbe") or "").strip() or palette[i % len(palette)]
-
         vmin = _to_float_or_none(row["Skala min"])
         vmax = _to_float_or_none(row["Skala max"])
-
         y_raw = pd.to_numeric(df[col], errors="coerce")
-
-        # Fehlende Skala min/max aus den Daten ableiten (auf 3 Nachkommastellen
-        # gerundet). Nur wenn tatsächlich numerische Werte vorhanden sind.
         if (vmin is None or vmax is None) and y_raw.notna().any():
-            data_min = float(y_raw.min())
-            data_max = float(y_raw.max())
+            dmin, dmax = float(y_raw.min()), float(y_raw.max())
             if vmin is None:
-                vmin = round(data_min, 3)
+                vmin = round(dmin, 3)
             if vmax is None:
-                vmax = round(data_max, 3) if data_max != data_min else round(data_min + 1, 3)
+                vmax = round(dmax, 3) if dmax != dmin else round(dmin + 1, 3)
+        series.append(dict(
+            col=col, label=label, einheit=einheit, color=color,
+            vmin=vmin, vmax=vmax, y_raw=y_raw,
+        ))
 
-        if normalize and vmin is not None and vmax is not None and vmax != vmin:
-            y_plot = (y_raw - vmin) / (vmax - vmin)
-            hover_unit = f" {einheit}" if einheit else ""
-            customdata = y_raw
-            # Bei hovermode="x unified" zeigt Plotly die x-Achse einmal oben —
-            # im Trace nur noch Label + Wert anzeigen.
-            hovertemplate = (
-                f"<b>{label}</b>: %{{customdata:.2f}}{hover_unit}<extra></extra>"
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=df[x_col],
-                    y=y_plot,
-                    mode="lines",
-                    name=f"{label} [{vmin:g}…{vmax:g} {einheit}]".strip(),
-                    line=dict(color=color, width=1.5),
-                    customdata=customdata,
-                    hovertemplate=hovertemplate,
-                )
-            )
-        else:
-            fig.add_trace(
-                go.Scatter(
-                    x=df[x_col],
-                    y=y_raw,
-                    mode="lines",
-                    name=f"{label}" + (f" [{einheit}]" if einheit else ""),
-                    line=dict(color=color, width=1.5),
-                    hovertemplate=(
-                        f"<b>{label}</b>: %{{y:.2f}}"
-                        f"{(' ' + einheit) if einheit else ''}<extra></extra>"
-                    ),
-                )
-            )
+    fig = go.Figure()
 
-    # Layout
-    if normalize:
-        y_title = "normierte Skala (0…1)"
-        y_range = [-0.02, 1.02]
-    else:
-        y_title = "Wert"
-        y_range = None
+    if mode == "Separate Y-Achsen je Serie":
+        _build_multi_axis(fig, series, df[x_col])
+        xaxis_kwargs = dict(title=x_title, rangeslider=dict(visible=True))
+    elif mode == "Normiert (0…1)":
+        _build_normalized(fig, series, df[x_col])
+        fig.update_layout(
+            yaxis=dict(title="normierte Skala (0…1)", range=[-0.02, 1.02])
+        )
+        xaxis_kwargs = dict(title=x_title, rangeslider=dict(visible=True))
+    else:  # Gemeinsame Y-Achse
+        _build_raw(fig, series, df[x_col])
+        fig.update_layout(yaxis=dict(title="Wert"))
+        xaxis_kwargs = dict(title=x_title, rangeslider=dict(visible=True))
 
     fig.update_layout(
         template="plotly_dark",
@@ -315,14 +285,86 @@ def build_figure(
         margin=dict(l=40, r=20, t=30, b=40),
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        xaxis=dict(title=x_title, rangeslider=dict(visible=True)),
-        yaxis=dict(title=y_title, range=y_range),
+        xaxis=xaxis_kwargs,
     )
-
     if x_range is not None:
         fig.update_xaxes(range=list(x_range))
-
     return fig
+
+
+def _build_normalized(fig: go.Figure, series: list[dict], x_data) -> None:
+    for s in series:
+        vmin, vmax = s["vmin"], s["vmax"]
+        if vmin is None or vmax is None or vmax == vmin:
+            continue
+        y_plot = (s["y_raw"] - vmin) / (vmax - vmin)
+        hu = f" {s['einheit']}" if s["einheit"] else ""
+        fig.add_trace(go.Scatter(
+            x=x_data, y=y_plot, mode="lines",
+            name=f"{s['label']} [{vmin:g}…{vmax:g} {s['einheit']}]".strip(),
+            line=dict(color=s["color"], width=1.5),
+            customdata=s["y_raw"],
+            hovertemplate=f"<b>{s['label']}</b>: %{{customdata:.2f}}{hu}<extra></extra>",
+        ))
+
+
+def _build_raw(fig: go.Figure, series: list[dict], x_data) -> None:
+    for s in series:
+        hu = f" {s['einheit']}" if s["einheit"] else ""
+        fig.add_trace(go.Scatter(
+            x=x_data, y=s["y_raw"], mode="lines",
+            name=f"{s['label']}" + (f" [{s['einheit']}]" if s["einheit"] else ""),
+            line=dict(color=s["color"], width=1.5),
+            hovertemplate=f"<b>{s['label']}</b>: %{{y:.2f}}{hu}<extra></extra>",
+        ))
+
+
+def _build_multi_axis(fig: go.Figure, series: list[dict], x_data) -> None:
+    """Je Serie eine eigene Y-Achse, links gestapelt in Seriefarbe."""
+    n = len(series)
+    if n == 0:
+        return
+    # Plotfläche um Platz für die gestapelten Achsen links einrücken.
+    axis_step = 0.04  # Bruchteil der Plotbreite pro Achse
+    left_reserved = min(0.35, axis_step * n)
+    x_domain = [left_reserved, 1.0]
+
+    for i, s in enumerate(series):
+        vmin, vmax = s["vmin"], s["vmax"]
+        hu = f" {s['einheit']}" if s["einheit"] else ""
+        # Achsen-ID: erste Serie -> "y", weitere -> "y2", "y3", ...
+        axis_id = "y" if i == 0 else f"y{i + 1}"
+        fig.add_trace(go.Scatter(
+            x=x_data, y=s["y_raw"], mode="lines",
+            name=s["label"] + (f" [{s['einheit']}]" if s["einheit"] else ""),
+            line=dict(color=s["color"], width=1.5),
+            yaxis=axis_id,
+            hovertemplate=f"<b>{s['label']}</b>: %{{y:.2f}}{hu}<extra></extra>",
+        ))
+
+        # Position der Achse: links, gestapelt von innen nach außen.
+        position = max(0.0, left_reserved - (i + 1) * axis_step)
+        axis_cfg = dict(
+            title=dict(text=s["einheit"], font=dict(color=s["color"])),
+            tickfont=dict(color=s["color"]),
+            linecolor=s["color"],
+            showgrid=(i == 0),  # nur erste Achse zeigt Gitter
+            zeroline=False,
+            range=[vmin, vmax] if vmin is not None and vmax is not None else None,
+        )
+        if i == 0:
+            fig.update_layout(yaxis=axis_cfg)
+        else:
+            axis_cfg.update(
+                overlaying="y",
+                side="left",
+                anchor="free",
+                position=position,
+            )
+            fig.update_layout(**{f"yaxis{i + 1}": axis_cfg})
+
+    # xaxis-domain einschränken, damit die Achsen links Platz haben.
+    fig.update_layout(xaxis=dict(domain=x_domain))
 
 
 # ---------------------------------------------------------------------------
@@ -365,9 +407,15 @@ with st.sidebar:
     cfg_download_slot = st.container()
 
     st.header("3) Darstellung")
-    normalize = st.checkbox(
-        "Spalten auf Skala min/max normieren (empfohlen bei gemischten Einheiten)",
-        value=True,
+    display_mode = st.radio(
+        "Y-Achsen-Modus",
+        DISPLAY_MODES,
+        index=0,
+        help=(
+            "Separate Achsen: wie Original-UI, jede Serie mit eigener Skala in "
+            "ihrer Farbe. Normiert: alle Kurven auf 0…1 gemappt. Gemeinsam: "
+            "alle auf einer Achse mit Rohwerten."
+        ),
     )
 
 if data_file is None:
@@ -504,7 +552,7 @@ else:
 # ---------------------------------------------------------------------------
 st.subheader("Diagramm")
 try:
-    fig = build_figure(df, edited, normalize=normalize, x_range=x_range)
+    fig = build_figure(df, edited, mode=display_mode, x_range=x_range)
     st.plotly_chart(fig, width="stretch", theme=None)
 except Exception as e:
     st.error(f"Plot konnte nicht erstellt werden: {e}")
