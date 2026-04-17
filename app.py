@@ -330,7 +330,10 @@ def _build_multi_axis(fig: go.Figure, series: list[dict], x_data) -> None:
     if n == 0:
         return
     axis_step = 0.05
-    left_reserved = min(0.4, axis_step * n)
+    # Primärachse (i=0) sitzt bei x=left_reserved, sekundäre bei
+    # left_reserved - i*axis_step. Domain muss die äußerste Achse
+    # einschließen; ein kleiner Puffer lässt Platz fürs Tick-Label.
+    left_reserved = min(0.4, axis_step * max(n - 1, 0) + 0.02)
     x_domain = [left_reserved, 1.0]
 
     annotations = []
@@ -348,7 +351,8 @@ def _build_multi_axis(fig: go.Figure, series: list[dict], x_data) -> None:
         ))
 
         # Position der Achse: links, gestapelt von innen nach außen.
-        position = max(0.0, left_reserved - (i + 1) * axis_step)
+        # i=0 → left_reserved (Primärachse), i=k → left_reserved - k*axis_step.
+        position = max(0.0, left_reserved - i * axis_step)
         axis_cfg = dict(
             title=None,  # Titel weglassen; stattdessen Annotation unten
             tickfont=dict(color=s["color"], size=10),
@@ -370,7 +374,7 @@ def _build_multi_axis(fig: go.Figure, series: list[dict], x_data) -> None:
 
         if s["einheit"]:
             annotations.append(dict(
-                x=position if i > 0 else left_reserved,
+                x=position,
                 y=-0.02,
                 xref="paper", yref="paper",
                 xanchor="center", yanchor="top",
