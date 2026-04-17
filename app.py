@@ -6,6 +6,7 @@ Start:
 from __future__ import annotations
 
 import io
+from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -404,7 +405,7 @@ with st.sidebar:
     st.header("1) Daten")
     data_file = st.file_uploader("CSV-Datendatei", type=["csv", "CSV"])
 
-    st.header("2) Config")
+    st.header("2) Diagramm-Konfig.")
     project_dir = Path(__file__).parent
     default_cfg_dir = project_dir / "default_config"
     default_cfg_dir.mkdir(exist_ok=True)
@@ -553,26 +554,58 @@ with cfg_download_slot:
     )
 
 # ---------------------------------------------------------------------------
-# Zeitbereich (x-Achse) slicen
+# Zeitbereich vorbereiten
+#
+# Zwei State-Ebenen:
+#   x_logical  — die *gewünschte* Auswahl (darf über den Datenbereich
+#                hinausgehen, z.B. voller Tag 00:00–23:59 auch wenn Daten
+#                erst um 06:00 beginnen).
+#   time_slider — die *angezeigte* Auswahl, auf den Datenbereich geklemmt.
+#
+# Buttons schreiben x_logical (on_click, feuert VOR Rendering), der Plot
+# und der Slider nutzen die geklemmte Fassung.  Wenn der Slider manuell
+# bewegt wird, überschreibt on_change auch x_logical.
 # ---------------------------------------------------------------------------
-st.subheader("Zeitbereich")
 x_col = x_col_sel
 x_series = df[x_col]
-x_range = None
-if pd.api.types.is_datetime64_any_dtype(x_series):
-    xmin, xmax = x_series.min().to_pydatetime(), x_series.max().to_pydatetime()
-    x_range = st.slider(
-        "Zeitfenster",
-        min_value=xmin,
-        max_value=xmax,
-        value=(xmin, xmax),
-        format="YYYY-MM-DD HH:mm",
-    )
-elif pd.api.types.is_numeric_dtype(x_series):
-    xmin, xmax = float(x_series.min()), float(x_series.max())
-    x_range = st.slider("Bereich", min_value=xmin, max_value=xmax, value=(xmin, xmax))
+is_datetime = pd.api.types.is_datetime64_any_dtype(x_series)
+is_numeric = pd.api.types.is_numeric_dtype(x_series)
+
+if is_datetime:
+    from datetime import datetime as _dt
+    _xmin_raw = x_series.min().to_pydatetime()
+    _xmax_raw = x_series.max().to_pydatetime()
+    # Slider-Grenzen auf volle Stunden runden (abrunden / aufrunden),
+    # damit die Schritte bei 0:00, 1:00, 2:00 … einrasten.
+    xmin = _xmin_raw.replace(minute=0, second=0, microsecond=0)
+    xmax = _xmax_raw.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+elif is_numeric:
+    xmin = float(x_series.min())
+    xmax = float(x_series.max())
 else:
-    st.caption(f"x-Spalte '{x_col}' ist kategorial – kein Slicing möglich.")
+    xmin = xmax = None
+
+_SLIDER_KEY = "time_slider"
+_LOGICAL_KEY = "x_logical"
+
+if xmin is not None:
+    # Initialisieren (erster Lauf)
+    if _LOGICAL_KEY not in st.session_state:
+        st.session_state[_LOGICAL_KEY] = (xmin, xmax)
+    if _SLIDER_KEY not in st.session_state:
+        st.session_state[_SLIDER_KEY] = (xmin, xmax)
+
+    # Geklemmte Fassung für Plot + Slider
+    def _clamp(lo, hi):
+        return (max(lo, xmin), min(hi, xmax))
+
+    display_range = _clamp(*st.session_state[_LOGICAL_KEY])
+    # Slider-State synchronisieren (nötig wenn Button den logischen Bereich
+    # geändert hat, da der Slider seinen eigenen Key nutzt).
+    st.session_state[_SLIDER_KEY] = display_range
+    x_range = display_range
+else:
+    x_range = None
 
 # ---------------------------------------------------------------------------
 # Plot
@@ -583,3 +616,80 @@ try:
     st.plotly_chart(fig, width="stretch", theme=None)
 except Exception as e:
     st.error(f"Plot konnte nicht erstellt werden: {e}")
+
+# ---------------------------------------------------------------------------
+# Zeitbereich (unter dem Diagramm)
+# ---------------------------------------------------------------------------
+if xmin is not None:
+    st.subheader("Zeitbereich")
+
+    if is_datetime:
+        def _set_logical(lo, hi):
+            """Setzt den logischen Bereich (ungeklemmt)."""
+            st.session_state[_LOGICAL_KEY] = (lo, hi)
+
+        def _shift(delta):
+            """Verschiebt den logischen Bereich um delta."""
+            lo, hi = st.session_state[_LOGICAL_KEY]
+            st.session_state[_LOGICAL_KEY] = (lo + delta, hi + delta)
+
+        def _on_slider_change():
+            """Slider manuell bewegt → logischen Bereich synchronisieren."""
+            st.session_state[_LOGICAL_KEY] = st.session_state[_SLIDER_KEY]
+
+        # Letzter Tag = Tag des letzten Datenpunkts (00:00 – 23:59),
+        # auch wenn die Daten den Tag nicht vollständig abdecken.
+        last_day_start = _dt(xmax.year, xmax.month, xmax.day, 0, 0, 0)
+        last_day_end = last_day_start + timedelta(days=1)
+
+        # Zeile 1: Schnellauswahl
+        cols1 = st.columns(5)
+        with cols1[0]:
+            st.button("Letzte 1h", use_container_width=True,
+                       on_click=_set_logical,
+                       args=(xmax - timedelta(hours=1), xmax))
+        with cols1[1]:
+            st.button("Letzte 12h", use_container_width=True,
+                       on_click=_set_logical,
+                       args=(xmax - timedelta(hours=12), xmax))
+        with cols1[2]:
+            st.button("Letzte 24h", use_container_width=True,
+                       on_click=_set_logical,
+                       args=(xmax - timedelta(hours=24), xmax))
+        with cols1[3]:
+            st.button("Letzter Tag", use_container_width=True,
+                       on_click=_set_logical,
+                       args=(last_day_start, last_day_end))
+        with cols1[4]:
+            st.button("Alles", use_container_width=True,
+                       on_click=_set_logical,
+                       args=(xmin, xmax))
+
+        # Zeile 2: Vor/Zurück
+        cols2 = st.columns(4)
+        with cols2[0]:
+            st.button("− 1h", use_container_width=True,
+                       on_click=_shift, args=(timedelta(hours=-1),))
+        with cols2[1]:
+            st.button("+ 1h", use_container_width=True,
+                       on_click=_shift, args=(timedelta(hours=1),))
+        with cols2[2]:
+            st.button("− 24h", use_container_width=True,
+                       on_click=_shift, args=(timedelta(hours=-24),))
+        with cols2[3]:
+            st.button("+ 24h", use_container_width=True,
+                       on_click=_shift, args=(timedelta(hours=24),))
+
+        st.slider(
+            "Zeitfenster",
+            min_value=xmin,
+            max_value=xmax,
+            step=timedelta(hours=1),
+            format="YYYY-MM-DD HH:mm",
+            key=_SLIDER_KEY,
+            on_change=_on_slider_change,
+        )
+    elif is_numeric:
+        st.slider("Bereich", min_value=xmin, max_value=xmax, key=_SLIDER_KEY)
+else:
+    st.caption(f"x-Spalte '{x_col}' ist kategorial – kein Slicing möglich.")
