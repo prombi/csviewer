@@ -405,7 +405,7 @@ with st.sidebar:
     st.header("1) Daten")
     data_file = st.file_uploader("CSV-Datendatei", type=["csv", "CSV"])
 
-    st.header("2) Diagramm-Konfig.")
+    st.header("2) Diagramm-Konfiguration")
     project_dir = Path(__file__).parent
     default_cfg_dir = project_dir / "default_config"
     default_cfg_dir.mkdir(exist_ok=True)
